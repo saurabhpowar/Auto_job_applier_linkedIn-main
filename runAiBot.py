@@ -763,8 +763,15 @@ def external_apply(pagination_element: WebElement, job_id: str, job_link: str, r
     global tabs_count, dailyEasyApplyLimitReached
     if easy_apply_only:
         try:
-            if "exceeded the daily application limit" in driver.find_element(By.CLASS_NAME, "artdeco-inline-feedback__message").text: dailyEasyApplyLimitReached = True
-        except: pass
+            inline_message = driver.find_element(By.CLASS_NAME, "artdeco-inline-feedback__message").text
+            if "exceeded the daily application limit" in inline_message or "we limit daily submissions" in inline_message.lower():
+                dailyEasyApplyLimitReached = True
+                msg = "LinkedIn has reached the daily submission limit. We limit daily submissions to maintain quality and prevent bots."
+                print_lg(msg)
+                if handle_daily_submission_limit(msg):
+                    return True, application_link, tabs_count
+        except Exception:
+            pass
         print_lg("Easy apply failed I guess!")
         if pagination_element != None: return True, application_link, tabs_count
     try:
@@ -831,6 +838,45 @@ def screenshot(driver: WebDriver, job_id: str, failedAt: str) -> str:
     return screenshot_name
 #>
 
+
+def check_daily_submission_limit() -> str | None:
+    '''
+    Detect LinkedIn daily submission limit banner/message.
+    Returns the error message if detected, otherwise None.
+    '''
+    try:
+        page_text = driver.page_source.lower()
+        limit_phrases = [
+            "we limit daily submissions to maintain quality and prevent bots",
+            "exceeded the daily application limit",
+            "daily submissions to maintain quality and prevent bots",
+            "we limit daily submissions"
+        ]
+        for phrase in limit_phrases:
+            if phrase in page_text:
+                return "LinkedIn has reached the daily submission limit. We limit daily submissions to maintain quality and prevent bots."
+    except Exception:
+        pass
+    return None
+
+
+def handle_daily_submission_limit(error_message: str) -> bool:
+    '''
+    Notify the user about the limit and ask whether to stop or continue.
+    Returns True when the bot should stop, else False.
+    '''
+    global dailyEasyApplyLimitReached
+    choice = pyautogui.confirm(
+        f"{error_message}\n\nDo you want to stop the bot or continue anyway?",
+        "Daily submission limit reached",
+        ["Stop Process", "Continue"]
+    )
+    if choice == "Stop Process":
+        dailyEasyApplyLimitReached = True
+        print_lg("Daily submission limit reached. Stopped by user choice.")
+        return True
+    print_lg("User chose to continue after daily submission limit warning.")
+    return False
 
 
 def submitted_jobs(job_id: str, title: str, company: str, work_location: str, work_style: str, description: str, experience_required: int | Literal['Unknown', 'Error in extraction'], 
@@ -900,6 +946,10 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     if keep_screen_awake: pyautogui.press('shiftright')
                     if current_count >= switch_number: break
                     print_lg("\n-@-\n")
+
+                    limit_error = check_daily_submission_limit()
+                    if limit_error and handle_daily_submission_limit(limit_error):
+                        return
 
                     job_id,title,company,work_location,work_style,skip = get_job_main_details(job, blacklisted_companies, rejected_jobs)
                     
