@@ -1036,6 +1036,20 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                         skip_count += 1
                         continue
 
+                    try:
+                        net_pattern = re.compile(r'\.net\b|\bdotnet\b', re.IGNORECASE)
+                        title_has_net = isinstance(title, str) and net_pattern.search(title)
+                        description_has_net = isinstance(description, str) and net_pattern.search(description)
+                        if not title_has_net and not description_has_net:
+                            msg = f'Title and description do not mention .NET/dotnet. Skipping {title} | {company}.'
+                            print_lg(msg)
+                            failed_job(job_id, job_link, resume, date_listed, "No .NET in title or description", msg, "Skipped", screenshot_name)
+                            rejected_jobs.add(job_id)
+                            skip_count += 1
+                            continue
+                    except Exception as e:
+                        print_lg("Failed to check title and description for .NET keyword", e)
+
                     if use_AI and description != "Unknown":
                         ##> ------ Yang Li : MARKYangL - Feature ------
                         try:
