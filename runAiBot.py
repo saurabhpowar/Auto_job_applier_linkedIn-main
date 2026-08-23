@@ -1036,20 +1036,6 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                         skip_count += 1
                         continue
 
-                    # Filter: only apply if job description mentions .NET (".net" or "dotnet")
-                    try:
-                        if isinstance(description, str) and description != "Unknown":
-                            if not re.search(r'\b(\.net|dotnet)\b', description, re.IGNORECASE):
-                                msg = f'Description does not mention .NET/dotnet. Skipping {title} | {company}.'
-                                print_lg(msg)
-                                failed_job(job_id, job_link, resume, date_listed, "No .NET in description", msg, "Skipped", screenshot_name)
-                                rejected_jobs.add(job_id)
-                                skip_count += 1
-                                continue
-                    except Exception as e:
-                        print_lg("Failed to check description for .NET keyword", e)
-
-                    
                     if use_AI and description != "Unknown":
                         ##> ------ Yang Li : MARKYangL - Feature ------
                         try:
