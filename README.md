@@ -57,6 +57,8 @@ Click on above image to watch the tutorial for installation and configuration or
 8. To run the Applied Jobs history UI, run `app.py` and open web browser on `http://localhost:5000`.
 8. If you have questions or need help setting it up or to talk in general, join the github server: https://discord.gg/fFp7uUzWCY
 
+External application URLs are appended to `all excels/all_external_application_links.csv` as soon as they are opened, independently of the browser session. If LinkedIn displays a bot-activity warning, the bot pauses once and keeps the browser open until you choose **Stop Process** or **Resume**.
+
 [back to index](#-content)
 
 <br>

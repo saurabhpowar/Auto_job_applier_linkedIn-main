@@ -79,6 +79,8 @@ external_jobs_count = 0
 failed_count = 0
 skip_count = 0
 dailyEasyApplyLimitReached = False
+bot_activity_warning_handled = False
+stop_requested = False
 
 re_experience = re.compile(r'[(]?\s*(\d+)\s*[)]?\s*[-to]*\s*\d*[+]*\s*year[s]?', re.IGNORECASE)
 
@@ -756,11 +758,11 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
 
 
 
-def external_apply(pagination_element: WebElement, job_id: str, job_link: str, resume: str, date_listed, application_link: str, screenshot_name: str) -> tuple[bool, str, int]:
+def external_apply(pagination_element: WebElement | None, job_id: str, job_link: str, title: str, company: str, resume: str, date_listed, application_link: str, screenshot_name: str) -> tuple[bool, str, int]:
     '''
     Function to open new tab and save external job application links
     '''
-    global tabs_count, dailyEasyApplyLimitReached
+    global tabs_count, dailyEasyApplyLimitReached, stop_requested
     if easy_apply_only:
         try:
             inline_message = driver.find_element(By.CLASS_NAME, "artdeco-inline-feedback__message").text
@@ -782,8 +784,21 @@ def external_apply(pagination_element: WebElement, job_id: str, job_link: str, r
         driver.switch_to.window(windows[-1])
         application_link = driver.current_url
         print_lg('Got the external application link "{}"'.format(application_link))
+        try:
+            save_external_application_link(job_id, job_link, title, company, application_link)
+        except Exception as e:
+            print_lg("Failed to save the external application link!", e)
+            stop_requested = True
+            pyautogui.alert(
+                f"The external application link could not be saved to {external_links_file_name}.\n"
+                "The link is shown in the log. Fix the file or folder permissions before continuing.",
+                "External Link Logging Failed"
+            )
+            raise
         if close_tabs and driver.current_window_handle != linkedIn_tab: driver.close()
         driver.switch_to.window(linkedIn_tab)
+        if handle_bot_activity_warning():
+            return True, application_link, tabs_count
         return False, application_link, tabs_count
     except Exception as e:
         # print_lg(e)
@@ -860,6 +875,41 @@ def check_daily_submission_limit() -> str | None:
     return None
 
 
+def handle_bot_activity_warning() -> bool:
+    '''
+    Pause after the first LinkedIn bot-activity warning until the user chooses to stop or resume.
+    Returns True when the user chose to stop the process.
+    '''
+    global bot_activity_warning_handled, stop_requested
+    if bot_activity_warning_handled or stop_requested:
+        return stop_requested
+
+    page_text = driver.page_source.lower()
+    warning_phrases = (
+        "bot activity",
+        "automated activity",
+        "automated behavior",
+        "automated behaviour",
+    )
+    if not any(phrase in page_text for phrase in warning_phrases):
+        return False
+
+    bot_activity_warning_handled = True
+    print_lg("LinkedIn bot-activity warning detected. Pausing for user input.")
+    decision = pyautogui.confirm(
+        "LinkedIn displayed a bot-activity warning. The browser will remain open and the process is paused.\n\n"
+        "Review the warning and wait until you are ready before resuming.",
+        "LinkedIn activity warning",
+        ["Stop Process", "Resume"]
+    )
+    if decision != "Resume":
+        stop_requested = True
+        print_lg("Stopped by user after LinkedIn bot-activity warning.")
+    else:
+        print_lg("User resumed after LinkedIn bot-activity warning.")
+    return stop_requested
+
+
 def handle_daily_submission_limit(error_message: str) -> bool:
     '''
     Notify the user about the limit and ask whether to stop or continue.
@@ -877,6 +927,26 @@ def handle_daily_submission_limit(error_message: str) -> bool:
         return True
     print_lg("User chose to continue after daily submission limit warning.")
     return False
+
+
+def save_external_application_link(job_id: str, job_link: str, title: str, company: str, application_link: str) -> None:
+    '''
+    Append an opened external application URL to its own persistent CSV file.
+    '''
+    fieldnames = ['Date Opened', 'Job ID', 'Title', 'Company', 'Job Link', 'External Application Link']
+    os.makedirs(os.path.dirname(os.path.abspath(external_links_file_name)), exist_ok=True)
+    with open(external_links_file_name, mode='a', newline='', encoding='utf-8') as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        if csv_file.tell() == 0:
+            writer.writeheader()
+        writer.writerow({
+            'Date Opened': datetime.now(),
+            'Job ID': truncate_for_csv(job_id),
+            'Title': truncate_for_csv(title),
+            'Company': truncate_for_csv(company),
+            'Job Link': truncate_for_csv(job_link),
+            'External Application Link': truncate_for_csv(application_link),
+        })
 
 
 def submitted_jobs(job_id: str, title: str, company: str, work_location: str, work_style: str, description: str, experience_required: int | Literal['Unknown', 'Error in extraction'], 
@@ -918,7 +988,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
     applied_jobs = get_applied_job_ids()
     rejected_jobs = set()
     blacklisted_companies = set()
-    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume
+    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume, stop_requested
     current_city = current_city.strip()
 
     if randomize_search_order:  shuffle(search_terms)
@@ -931,9 +1001,13 @@ def apply_to_jobs(search_terms: list[str]) -> None:
 
         current_count = 0
         try:
-            while current_count < switch_number:
+            while current_count < switch_number and not stop_requested:
+                if handle_bot_activity_warning():
+                    return
                 # Wait until job listings are loaded
                 wait.until(EC.presence_of_all_elements_located((By.XPATH, "//li[@data-occludable-job-id]")))
+                if handle_bot_activity_warning():
+                    return
 
                 pagination_element, current_page = get_page_info()
 
@@ -944,6 +1018,8 @@ def apply_to_jobs(search_terms: list[str]) -> None:
             
                 for job in job_listings:
                     if keep_screen_awake: pyautogui.press('shiftright')
+                    if stop_requested or handle_bot_activity_warning():
+                        return
                     if current_count >= switch_number: break
                     print_lg("\n-@-\n")
 
@@ -1067,7 +1143,11 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                             skills = "Error extracting skills"
                         ##<
 
+                    if handle_bot_activity_warning():
+                        return
+
                     uploaded = False
+                    external_link_opened = False
                     # Case 1: Easy Apply Button
                     # First try the classic button with "Easy" in aria-label
                     is_easy_apply = try_xp(driver, ".//button[contains(@class,'jobs-apply-button') and contains(@class, 'artdeco-button--3') and contains(@aria-label, 'Easy')]")
@@ -1091,11 +1171,26 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                 buffer(click_gap)
                                 tabs_after = len(driver.window_handles)
                                 if tabs_after > tabs_before:
-                                    # New tab opened — external apply, close it and go back
+                                    # Save the URL before any option closes the external tab.
                                     driver.switch_to.window(driver.window_handles[-1])
+                                    application_link = driver.current_url
+                                    print_lg('Got the external application link "{}"'.format(application_link))
+                                    try:
+                                        save_external_application_link(job_id, job_link, title, company, application_link)
+                                    except Exception as e:
+                                        print_lg("Failed to save the external application link!", e)
+                                        stop_requested = True
+                                        pyautogui.alert(
+                                            f"The external application link could not be saved to {external_links_file_name}.\n"
+                                            "The process will stop so that no opened link is lost.",
+                                            "External Link Logging Failed"
+                                        )
+                                        return
+                                    external_link_opened = True
                                     if close_tabs and driver.current_window_handle != linkedIn_tab: driver.close()
                                     driver.switch_to.window(linkedIn_tab)
-                                    print_lg("External apply detected via new tab, skipping")
+                                    if handle_bot_activity_warning():
+                                        return
                                 else:
                                     try:
                                         find_by_class(driver, "jobs-easy-apply-modal")
@@ -1175,9 +1270,14 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                             continue
                     else:
                         # Case 2: Apply externally
-                        skip, application_link, tabs_count = external_apply(pagination_element, job_id, job_link, resume, date_listed, application_link, screenshot_name)
+                        if external_link_opened:
+                            skip = False
+                        else:
+                            skip, application_link, tabs_count = external_apply(pagination_element, job_id, job_link, title, company, resume, date_listed, application_link, screenshot_name)
                         if dailyEasyApplyLimitReached:
                             print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                            return
+                        if stop_requested:
                             return
                         if skip: continue
 
@@ -1189,6 +1289,8 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     if application_link == "Easy Applied": easy_applied_count += 1
                     else:   external_jobs_count += 1
                     applied_jobs.add(job_id)
+                    if handle_bot_activity_warning():
+                        return
 
 
 
@@ -1217,7 +1319,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
 
         
 def run(total_runs: int) -> int:
-    if dailyEasyApplyLimitReached:
+    if dailyEasyApplyLimitReached or stop_requested:
         return total_runs
     print_lg("\n########################################################################################################################\n")
     print_lg(f"Date and Time: {datetime.now()}")
@@ -1225,7 +1327,7 @@ def run(total_runs: int) -> int:
     print_lg(f"Currently looking for jobs posted within '{date_posted}' and sorting them by '{sort_by}'")
     apply_to_jobs(search_terms)
     print_lg("########################################################################################################################\n")
-    if not dailyEasyApplyLimitReached:
+    if not dailyEasyApplyLimitReached and not stop_requested:
         print_lg("Sleeping for 10 min...")
         sleep(300)
         print_lg("Few more min... Gonna start with in next 5 min...")
@@ -1288,7 +1390,7 @@ def main() -> None:
         # Start applying to jobs
         driver.switch_to.window(linkedIn_tab)
         total_runs = run(total_runs)
-        while(run_non_stop):
+        while(run_non_stop and not stop_requested):
             if cycle_date_posted:
                 date_options = ["Any time", "Past month", "Past week", "Past 24 hours"]
                 global date_posted
@@ -1299,7 +1401,7 @@ def main() -> None:
                 total_runs = run(total_runs)
                 sort_by = "Most recent" if sort_by == "Most relevant" else "Most relevant"
             total_runs = run(total_runs)
-            if dailyEasyApplyLimitReached:
+            if dailyEasyApplyLimitReached or stop_requested:
                 break
         
 
