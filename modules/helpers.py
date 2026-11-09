@@ -21,6 +21,7 @@ import os
 import sys
 import json
 import pathlib
+import traceback
 
 from time import sleep
 from random import randint
@@ -128,6 +129,62 @@ def get_log_path():
 
 
 __logs_file_path = get_log_path()
+
+
+def save_ui_diagnostic(driver, context: str, error: Exception) -> str | None:
+    '''
+    Save the current browser URL, title, screenshot, page source, and exception details.
+    '''
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    diagnostic_dir = os.path.join(logs_folder_path, "search-filter-errors")
+    base_path = os.path.join(diagnostic_dir, f"filter_error_{timestamp}")
+    capture_errors = []
+
+    try:
+        os.makedirs(diagnostic_dir, exist_ok=True)
+    except OSError as save_error:
+        print(f"Failed to create UI diagnostic directory '{diagnostic_dir}': {save_error}", file=sys.stderr)
+        return None
+
+    try:
+        page_source = driver.page_source
+        with open(base_path + ".html", "w", encoding="utf-8") as file:
+            file.write(page_source)
+    except Exception as save_error:
+        capture_errors.append(f"Page source capture failed: {save_error}")
+
+    try:
+        if not driver.save_screenshot(base_path + ".png"):
+            capture_errors.append("WebDriver reported that screenshot capture failed.")
+    except Exception as save_error:
+        capture_errors.append(f"Screenshot capture failed: {save_error}")
+
+    try:
+        current_url = driver.current_url
+    except Exception as save_error:
+        current_url = f"Unavailable: {save_error}"
+    try:
+        page_title = driver.title
+    except Exception as save_error:
+        page_title = f"Unavailable: {save_error}"
+
+    try:
+        with open(base_path + ".txt", "w", encoding="utf-8") as file:
+            file.write(f"Timestamp: {datetime.now().astimezone().isoformat(timespec='seconds')}\n")
+            file.write(f"Context: {context}\n")
+            file.write(f"URL: {current_url}\n")
+            file.write(f"Page title: {page_title}\n")
+            file.write(f"Error: {type(error).__name__}: {error}\n\n")
+            file.write("Traceback:\n")
+            file.write("".join(traceback.format_exception(type(error), error, error.__traceback__)))
+            if capture_errors:
+                file.write("\nCapture issues:\n")
+                file.write("\n".join(capture_errors))
+    except OSError as save_error:
+        print(f"Failed to write UI diagnostic '{base_path}.txt': {save_error}", file=sys.stderr)
+        return None
+
+    return base_path + ".txt"
 
 
 def print_lg(*msgs: str | dict, end: str = "\n", pretty: bool = False, flush: bool = False, from_critical: bool = False) -> None:

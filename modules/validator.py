@@ -111,7 +111,8 @@ def validate_search() -> None | ValueError | TypeError:
     global __validation_file_path
     __validation_file_path = "config/search.py"
 
-    check_list(search_terms, "search_terms", min_length=1)
+    check_list(search_terms, "search_terms", min_length=0 if manual_search else 1)
+    check_boolean(manual_search, "manual_search")
     check_string(search_location, "search_location")
     check_int(switch_number, "switch_number", 1)
     check_boolean(randomize_search_order, "randomize_search_order")
@@ -232,4 +233,3 @@ def validate_config() -> bool | ValueError | TypeError:
     # validate_String(chatGPT_password, "chatGPT_password")
     # validate_String(chatGPT_resume_chat_title, "chatGPT_resume_chat_title")
     return True
-

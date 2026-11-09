@@ -15,7 +15,7 @@ version:    26.01.20.5.08
 '''
 
 from config.settings import click_gap, smooth_scroll
-from modules.helpers import buffer, print_lg, sleep
+from modules.helpers import buffer, print_lg, save_ui_diagnostic, sleep
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -43,7 +43,8 @@ def wait_span_click(driver: WebDriver, text: str, time: float=5.0, click: bool=T
                 buffer(click_gap)
             return button
         except Exception as e:
-            print_lg("Click Failed! Didn't find '"+text+"'")
+            diagnostic_path = save_ui_diagnostic(driver, f"Search filter click: {text}", e)
+            print_lg(f"Click Failed! Didn't find '{text}'. UI diagnostic: {diagnostic_path or 'not saved'}")
             # print_lg(e)
             return False
 
@@ -65,12 +66,13 @@ def multi_sel(driver: WebDriver, texts: list, time: float=5.0) -> None:
             print_lg("Click Failed! Didn't find '"+text+"'")
             # print_lg(e)
 
-def multi_sel_noWait(driver: WebDriver, texts: list, actions: ActionChains = None) -> None:
+def multi_sel_noWait(driver: WebDriver, texts: list, actions: ActionChains = None) -> bool:
     '''
     - For each text in the `texts`, tries to find and click `span` element with that class.
     - If `actions` is provided, bot tries to search and Add the `text` to this filters list section.
     - Won't wait to search for each element, assumes that element is rendered.
     '''
+    all_selected = True
     for text in texts:
         try:
             button = driver.find_element(By.XPATH, './/span[normalize-space(.)="'+text+'"]')
@@ -78,11 +80,21 @@ def multi_sel_noWait(driver: WebDriver, texts: list, actions: ActionChains = Non
             button.click()
             buffer(click_gap)
         except Exception as e:
-            if actions: company_search_click(driver,actions,text)
-            else:   print_lg("Click Failed! Didn't find '"+text+"'")
+            if actions:
+                try:
+                    company_search_click(driver, actions, text)
+                except Exception as search_error:
+                    diagnostic_path = save_ui_diagnostic(driver, f"Search filter click: {text}", search_error)
+                    print_lg(f"Click Failed! Didn't find '{text}'. UI diagnostic: {diagnostic_path or 'not saved'}")
+                    all_selected = False
+            else:
+                diagnostic_path = save_ui_diagnostic(driver, f"Search filter click: {text}", e)
+                print_lg(f"Click Failed! Didn't find '{text}'. UI diagnostic: {diagnostic_path or 'not saved'}")
+                all_selected = False
             # print_lg(e)
+    return all_selected
 
-def boolean_button_click(driver: WebDriver, actions: ActionChains, text: str) -> None:
+def boolean_button_click(driver: WebDriver, actions: ActionChains, text: str) -> bool:
     '''
     Tries to click on the boolean button with the given `text` text.
     '''
@@ -92,9 +104,12 @@ def boolean_button_click(driver: WebDriver, actions: ActionChains, text: str) ->
         scroll_to_view(driver, button)
         actions.move_to_element(button).click().perform()
         buffer(click_gap)
+        return True
     except Exception as e:
-        print_lg("Click Failed! Didn't find '"+text+"'")
+        diagnostic_path = save_ui_diagnostic(driver, f"Search filter toggle: {text}", e)
+        print_lg(f"Click Failed! Didn't find '{text}'. UI diagnostic: {diagnostic_path or 'not saved'}")
         # print_lg(e)
+        return False
 
 # Find functions
 def find_by_class(driver: WebDriver, class_name: str, time: float=5.0) -> WebElement | Exception:
@@ -157,7 +172,7 @@ def company_search_click(driver: WebDriver, actions: ActionChains, companyName: 
     actions.send_keys(Keys.ENTER).perform()
     print_lg(f'Tried searching and adding "{companyName}"')
 
-def text_input(actions: ActionChains, textInputEle: WebElement | bool, value: str, textFieldName: str = "Text") -> None | Exception:
+def text_input(actions: ActionChains, textInputEle: WebElement | bool, value: str, textFieldName: str = "Text") -> bool:
     if textInputEle:
         sleep(1)
         # actions.key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
@@ -165,5 +180,7 @@ def text_input(actions: ActionChains, textInputEle: WebElement | bool, value: st
         textInputEle.send_keys(value.strip())
         sleep(2)
         actions.send_keys(Keys.ENTER).perform()
+        return True
     else:
         print_lg(f'{textFieldName} input was not given!')
+        return False

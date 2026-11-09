@@ -20,6 +20,8 @@ version:    26.01.20.5.08
 # These Sentences are Searched in LinkedIn
 # Enter your search terms inside '[ ]' with quotes ' "searching title" ' for each search followed by comma ', ' Eg: ["Software Engineer", "Software Developer", "Selenium Developer"]
 search_terms = [".Net full stack developer", ".Net backend developer", ".Net developer", "C# developer", "C# backend developer", "C# full stack developer", "C# software engineer", "C# software developer", "C# programmer", "C# application developer", "C# web developer", "C# web application developer", "C# web application engineer", "C# web application programmer", "C# web application software engineer", "C# web application software developer"]
+# Choose whether job filters are selected manually in LinkedIn or applied by the bot.
+manual_search = True                # True: set up the search and filters yourself; False: use configured search_terms and filters
 # Search location, this will be filled in "City, state, or zip code" search box. If left empty as "", tool will not fill it.
 search_location = "India"               # Some valid examples: "", "United States", "India", "Chicago, Illinois, United States", "90001, Los Angeles, California, United States", "Bengaluru, Karnataka, India", etc.
 

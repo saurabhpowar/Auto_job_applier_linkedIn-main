@@ -33,7 +33,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support.select import Select
 from selenium.webdriver.remote.webelement import WebElement
-from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException, NoSuchWindowException, ElementNotInteractableException, WebDriverException
+from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException, NoSuchWindowException, InvalidSessionIdException, TimeoutException, ElementNotInteractableException, WebDriverException
 
 from config.personals import *
 from config.questions import *
@@ -83,6 +83,7 @@ bot_activity_warning_handled = False
 stop_requested = False
 
 re_experience = re.compile(r'[(]?\s*(\d+)\s*[)]?\s*[-to]*\s*\d*[+]*\s*year[s]?', re.IGNORECASE)
+JOB_LISTING_SELECTOR = "li[data-occludable-job-id], div[role='button'][componentkey^='job-card-component-ref-']"
 
 desired_salary_lakhs = str(round(desired_salary / 100000, 2))
 desired_salary_monthly = str(round(desired_salary/12, 2))
@@ -183,7 +184,7 @@ def get_applied_job_ids() -> set[str]:
 
 
 
-def set_search_location() -> None:
+def set_search_location() -> bool:
     '''
     Function to set search location
     '''
@@ -191,76 +192,117 @@ def set_search_location() -> None:
         try:
             print_lg(f'Setting search location as: "{search_location.strip()}"')
             search_location_ele = try_xp(driver, ".//input[@aria-label='City, state, or zip code'and not(@disabled)]", False) #  and not(@aria-hidden='true')]")
-            text_input(actions, search_location_ele, search_location, "Search Location")
+            if not text_input(actions, search_location_ele, search_location, "Search Location"):
+                raise RuntimeError("LinkedIn search location field was not found.")
         except ElementNotInteractableException:
-            try_xp(driver, ".//label[@class='jobs-search-box__input-icon jobs-search-box__keywords-label']")
-            actions.send_keys(Keys.TAB, Keys.TAB).perform()
-            actions.key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
-            actions.send_keys(search_location.strip()).perform()
-            sleep(2)
-            actions.send_keys(Keys.ENTER).perform()
-            try_xp(driver, ".//button[@aria-label='Cancel']")
+            try:
+                try_xp(driver, ".//label[@class='jobs-search-box__input-icon jobs-search-box__keywords-label']")
+                actions.send_keys(Keys.TAB, Keys.TAB).perform()
+                actions.key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
+                actions.send_keys(search_location.strip()).perform()
+                sleep(2)
+                actions.send_keys(Keys.ENTER).perform()
+                try_xp(driver, ".//button[@aria-label='Cancel']")
+                return True
+            except Exception as e:
+                diagnostic_path = save_ui_diagnostic(driver, "Setting LinkedIn search location", e)
+                print_lg("Failed to set search location.", e)
+                print_lg(f"Search/filter diagnostic saved: {diagnostic_path or 'not saved'}")
+                return False
         except Exception as e:
-            try_xp(driver, ".//button[@aria-label='Cancel']")
-            print_lg("Failed to update search location, continuing with default location!", e)
+            diagnostic_path = save_ui_diagnostic(driver, "Setting LinkedIn search location", e)
+            print_lg("Failed to set search location.", e)
+            print_lg(f"Search/filter diagnostic saved: {diagnostic_path or 'not saved'}")
+            return False
+        return True
+    return True
 
 
 def apply_filters() -> None:
     '''
     Function to apply job search filters
     '''
-    set_search_location()
-
     try:
+        if not set_search_location():
+            raise RuntimeError("Could not set the configured search location.")
         recommended_wait = 1 if click_gap < 1 else 0
 
         wait.until(EC.presence_of_element_located((By.XPATH, '//button[normalize-space()="All filters"]'))).click()
         buffer(recommended_wait)
 
-        wait_span_click(driver, sort_by)
-        wait_span_click(driver, date_posted)
+        if sort_by and not wait_span_click(driver, sort_by):
+            raise RuntimeError(f"Could not select sort order: {sort_by}")
+        if date_posted and not wait_span_click(driver, date_posted):
+            raise RuntimeError(f"Could not select date posted filter: {date_posted}")
         buffer(recommended_wait)
 
-        multi_sel_noWait(driver, experience_level) 
-        multi_sel_noWait(driver, companies, actions)
+        if not multi_sel_noWait(driver, experience_level):
+            raise RuntimeError("Could not select one or more experience filters.")
+        if not multi_sel_noWait(driver, companies, actions):
+            raise RuntimeError("Could not select one or more company filters.")
         if experience_level or companies: buffer(recommended_wait)
 
-        multi_sel_noWait(driver, job_type)
-        multi_sel_noWait(driver, on_site)
+        if not multi_sel_noWait(driver, job_type):
+            raise RuntimeError("Could not select one or more job type filters.")
+        if not multi_sel_noWait(driver, on_site):
+            raise RuntimeError("Could not select one or more work location filters.")
         if job_type or on_site: buffer(recommended_wait)
 
-        if easy_apply_only: boolean_button_click(driver, actions, "Easy Apply")
+        if easy_apply_only and not boolean_button_click(driver, actions, "Easy Apply"):
+            raise RuntimeError("Could not enable the Easy Apply filter.")
         
-        multi_sel_noWait(driver, location)
-        multi_sel_noWait(driver, industry)
+        if not multi_sel_noWait(driver, location):
+            raise RuntimeError("Could not select one or more location filters.")
+        if not multi_sel_noWait(driver, industry):
+            raise RuntimeError("Could not select one or more industry filters.")
         if location or industry: buffer(recommended_wait)
 
-        multi_sel_noWait(driver, job_function)
-        multi_sel_noWait(driver, job_titles)
+        if not multi_sel_noWait(driver, job_function):
+            raise RuntimeError("Could not select one or more job function filters.")
+        if not multi_sel_noWait(driver, job_titles):
+            raise RuntimeError("Could not select one or more job title filters.")
         if job_function or job_titles: buffer(recommended_wait)
 
-        if under_10_applicants: boolean_button_click(driver, actions, "Under 10 applicants")
-        if in_your_network: boolean_button_click(driver, actions, "In your network")
-        if fair_chance_employer: boolean_button_click(driver, actions, "Fair Chance Employer")
+        if under_10_applicants and not boolean_button_click(driver, actions, "Under 10 applicants"):
+            raise RuntimeError("Could not enable the Under 10 applicants filter.")
+        if in_your_network and not boolean_button_click(driver, actions, "In your network"):
+            raise RuntimeError("Could not enable the In your network filter.")
+        if fair_chance_employer and not boolean_button_click(driver, actions, "Fair Chance Employer"):
+            raise RuntimeError("Could not enable the Fair Chance Employer filter.")
 
-        wait_span_click(driver, salary)
+        if salary and not wait_span_click(driver, salary):
+            raise RuntimeError(f"Could not select salary filter: {salary}")
         buffer(recommended_wait)
         
-        multi_sel_noWait(driver, benefits)
-        multi_sel_noWait(driver, commitments)
+        if not multi_sel_noWait(driver, benefits):
+            raise RuntimeError("Could not select one or more benefits filters.")
+        if not multi_sel_noWait(driver, commitments):
+            raise RuntimeError("Could not select one or more commitments filters.")
         if benefits or commitments: buffer(recommended_wait)
 
         show_results_button: WebElement = driver.find_element(By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]')
         show_results_button.click()
 
         global pause_after_filters
-        if pause_after_filters and "Turn off Pause after search" == pyautogui.confirm("These are your configured search results and filter. It is safe to change them while this dialog is open, any changes later could result in errors and skipping this search run.", "Please check your results", ["Turn off Pause after search", "Look's good, Continue"]):
+        if pause_after_filters and "Turn off Pause after search" == pyautogui.confirm("These are your configured search results and filter. It is safe to change them while this dialog is open, any changes later could result in errors and skipping this search run.", "Please check your results", ("Turn off Pause after search", "Look's good, Continue")):
             pause_after_filters = False
 
     except Exception as e:
-        print_lg("Setting the preferences failed!")
-        pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog, I know it sucks. Can't turn off Pause after search when error occurs! ERROR: {e}", ["Doesn't look good, but Continue XD", "Look's good, Continue"])
-        # print_lg(e)
+        diagnostic_path = save_ui_diagnostic(driver, "Applying configured LinkedIn search filters", e)
+        print_lg("Setting the preferences failed!", e)
+        print_lg(f"Search/filter diagnostic saved: {diagnostic_path or 'not saved'}")
+        decision = pyautogui.confirm(
+            "Automatic filter setup failed. The page screenshot, HTML, URL, and error details "
+            f"were saved under '{logs_folder_path}search-filter-errors' when capture was available.\n\n"
+            "You can adjust the search and filters manually in the browser, then continue with "
+            "the displayed results, or stop this run.\n\nError: "
+            f"{type(e).__name__}: {e}",
+            "Manual filter recovery",
+            ("Continue with current results", "Stop"),
+        )
+        if decision != "Continue with current results":
+            global stop_requested
+            stop_requested = True
 
 
 
@@ -269,9 +311,18 @@ def get_page_info() -> tuple[WebElement | None, int | None]:
     Function to get pagination element and current page number
     '''
     try:
-        pagination_element = try_find_by_classes(driver, ["jobs-search-pagination__pages", "artdeco-pagination", "artdeco-pagination__pages"])
+        try:
+            current_page_button = driver.find_element(
+                By.XPATH,
+                "//button[@aria-current='true' and starts-with(@aria-label, 'Page ')]",
+            )
+            current_page = int(current_page_button.get_attribute("aria-label").removeprefix("Page "))
+            pagination_element = current_page_button.find_element(By.XPATH, "./ancestor::nav[1]")
+        except NoSuchElementException:
+            pagination_element = try_find_by_classes(driver, ["jobs-search-pagination__pages", "artdeco-pagination", "artdeco-pagination__pages"])
+            current_page_button = pagination_element.find_element(By.XPATH, ".//button[contains(@class, 'active')]")
+            current_page = int(current_page_button.text)
         scroll_to_view(driver, pagination_element)
-        current_page = int(pagination_element.find_element(By.XPATH, "//button[contains(@class, 'active')]").text)
     except Exception as e:
         print_lg("Failed to find Pagination element, hence couldn't scroll till end!")
         pagination_element = None
@@ -293,19 +344,40 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     * skip: A boolean flag to skip this job
     '''
     skip = False
-    job_details_button = job.find_element(By.TAG_NAME, 'a')  # job.find_element(By.CLASS_NAME, "job-card-list__title")  # Problem in India
-    scroll_to_view(driver, job_details_button, True)
     job_id = job.get_dom_attribute('data-occludable-job-id')
-    title = job_details_button.text
-    title = title[:title.find("\n")]
-    # company = job.find_element(By.CLASS_NAME, "job-card-container__primary-description").text
-    # work_location = job.find_element(By.CLASS_NAME, "job-card-container__metadata-item").text
-    other_details = job.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
-    index = other_details.find(' · ')
-    company = other_details[:index]
-    work_location = other_details[index+3:]
-    work_style = work_location[work_location.rfind('(')+1:work_location.rfind(')')]
-    work_location = work_location[:work_location.rfind('(')].strip()
+    if job_id:
+        job_details_button = job.find_element(By.TAG_NAME, 'a')
+        scroll_to_view(driver, job_details_button, True)
+        title = job_details_button.text.splitlines()[0]
+        other_details = job.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
+        index = other_details.find(' · ')
+        company = other_details[:index]
+        work_location = other_details[index+3:]
+    else:
+        component_key = job.get_attribute("componentkey") or ""
+        job_id_match = re.search(r"job-card-component-ref-(\d+)", component_key)
+        if not job_id_match:
+            raise ValueError(f"Unable to extract job ID from card component key: {component_key!r}")
+        job_id = job_id_match.group(1)
+        job_details_button = job
+        scroll_to_view(driver, job_details_button, True)
+        card_paragraphs = [
+            paragraph.text.strip()
+            for paragraph in job.find_elements(By.XPATH, ".//p")
+            if paragraph.text.strip()
+        ]
+        if len(card_paragraphs) < 3:
+            raise ValueError(
+                f"LinkedIn job card {job_id} did not contain title, company, and location."
+            )
+        title = card_paragraphs[0].splitlines()[0].replace("(Verified job)", "").strip()
+        company = card_paragraphs[1]
+        work_location = card_paragraphs[2]
+
+    work_style_match = re.search(r"\((Remote|Hybrid|On-site)\)\s*$", work_location, re.IGNORECASE)
+    work_style = work_style_match.group(1) if work_style_match else ""
+    if work_style_match:
+        work_location = work_location[:work_style_match.start()].strip()
     
     # Skip if previously rejected due to blacklist or already applied
     if company in blacklisted_companies:
@@ -316,6 +388,9 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
         skip = True
     try:
         footer_text = job.find_element(By.CLASS_NAME, "job-card-container__footer-job-state").text.strip()
+    except NoSuchElementException:
+        footer_text = job.text
+    try:
         footer_lower = footer_text.lower()
         # Skip jobs that are already applied, viewed, or saved
         if 'applied' in footer_lower or 'viewed' in footer_lower or 'saved' in footer_lower:
@@ -984,28 +1059,80 @@ def discard_job() -> None:
 
 
 # Function to apply to jobs
-def apply_to_jobs(search_terms: list[str]) -> None:
+def apply_to_jobs(search_terms: list[str], session_retries: int = 0) -> None:
     applied_jobs = get_applied_job_ids()
     rejected_jobs = set()
     blacklisted_companies = set()
     global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume, stop_requested
+    global options, driver, actions, wait, linkedIn_tab
     current_city = current_city.strip()
 
-    if randomize_search_order:  shuffle(search_terms)
-    for searchTerm in search_terms:
-        driver.get(f"https://www.linkedin.com/jobs/search/?keywords={searchTerm}")
-        print_lg("\n________________________________________________________________________________________________________________________\n")
-        print_lg(f'\n>>>> Now searching for "{searchTerm}" <<<<\n\n')
+    if manual_search:
+        search_terms_to_process = [None]
+        driver.get("https://www.linkedin.com/jobs/")
+        decision = pyautogui.confirm(
+            "In the browser, enter your job search and set the filters manually. "
+            "When the results you want are displayed, choose Continue to start applying.",
+            "Manual job search and filters",
+            ("Continue to results", "Stop"),
+        )
+        if decision != "Continue to results":
+            print_lg("Manual job search cancelled. No applications were started.")
+            stop_requested = True
+            return
+    else:
+        if randomize_search_order:
+            shuffle(search_terms)
+        search_terms_to_process = search_terms
 
-        apply_filters()
+    for searchTerm in search_terms_to_process:
+        if manual_search:
+            print_lg("\n________________________________________________________________________________________________________________________\n")
+            print_lg("\n>>>> Applying to the manually selected LinkedIn search <<<<\n\n")
+        else:
+            driver.get(f"https://www.linkedin.com/jobs/search/?keywords={searchTerm}")
+            print_lg("\n________________________________________________________________________________________________________________________\n")
+            print_lg(f'\n>>>> Now searching for "{searchTerm}" <<<<\n\n')
+            apply_filters()
+            if stop_requested:
+                return
 
         current_count = 0
         try:
             while current_count < switch_number and not stop_requested:
                 if handle_bot_activity_warning():
                     return
-                # Wait until job listings are loaded
-                wait.until(EC.presence_of_all_elements_located((By.XPATH, "//li[@data-occludable-job-id]")))
+                # Wait for the results page and allow manual recovery if its UI is slow or changed.
+                while not stop_requested:
+                    try:
+                        WebDriverWait(driver, 30).until(
+                            EC.presence_of_all_elements_located(
+                                (By.CSS_SELECTOR, JOB_LISTING_SELECTOR)
+                            )
+                        )
+                        break
+                    except TimeoutException as e:
+                        diagnostic_path = save_ui_diagnostic(
+                            driver,
+                            "Waiting for LinkedIn job results",
+                            e,
+                        )
+                        print_lg(
+                            "Job results were not detected before timeout.",
+                            f"UI diagnostic: {diagnostic_path or 'not saved'}",
+                        )
+                        decision = pyautogui.confirm(
+                            "The browser session is still open, but job listings were not detected. "
+                            "Check that LinkedIn is showing a loaded results list. You can adjust "
+                            "the search in the browser while this prompt is open, then retry.",
+                            "Job results not detected",
+                            ("Retry", "Stop"),
+                        )
+                        if decision != "Retry":
+                            stop_requested = True
+                            return
+                if stop_requested:
+                    return
                 if handle_bot_activity_warning():
                     return
 
@@ -1013,7 +1140,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
 
                 # Find all job listings in current page
                 buffer(3)
-                job_listings = driver.find_elements(By.XPATH, "//li[@data-occludable-job-id]")  
+                job_listings = driver.find_elements(By.CSS_SELECTOR, JOB_LISTING_SELECTOR)
 
             
                 for job in job_listings:
@@ -1305,9 +1432,52 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     print_lg(f"\n>-> Didn't find Page {current_page+1}. Probably at the end page of results!\n")
                     break
 
-        except (NoSuchWindowException, WebDriverException) as e:
-            print_lg("Browser window closed or session is invalid. Ending application process.", e)
-            raise e # Re-raise to be caught by main
+        except (InvalidSessionIdException, NoSuchWindowException) as e:
+            critical_error_log(
+                f"Browser session was lost while processing a search "
+                f"(type={type(e).__name__}, details={e!r}, jobs processed in this search={current_count}).",
+                e,
+            )
+            if current_count > 0 or session_retries >= 1:
+                print_lg("Automatic browser recovery is unsafe or already attempted; stopping this search.")
+                raise
+
+            decision = pyautogui.confirm(
+                "The browser session was lost before any jobs were processed. "
+                "Reopen Chrome once and let you restore the search, or stop now?",
+                "Browser session lost",
+                ("Reopen Chrome", "Stop"),
+            )
+            if decision != "Reopen Chrome":
+                stop_requested = True
+                return
+
+            try:
+                try:
+                    driver.quit()
+                except WebDriverException:
+                    pass
+                options, driver, actions, wait = createChromeSession(True)
+                linkedIn_tab = driver.current_window_handle
+                print_lg("Opened a fresh Chrome session after the previous session was lost.")
+                if manual_search:
+                    return apply_to_jobs([], session_retries + 1)
+                return apply_to_jobs([searchTerm], session_retries + 1)
+            except Exception as recovery_error:
+                critical_error_log("Failed to recover the lost browser session.", recovery_error)
+                stop_requested = True
+                pyautogui.alert(
+                    f"Could not reopen the browser session:\n{type(recovery_error).__name__}: {recovery_error}",
+                    "Browser recovery failed",
+                )
+                return
+        except WebDriverException as e:
+            critical_error_log(
+                f"WebDriver failed while processing a search "
+                f"(type={type(e).__name__}, details={e!r}).",
+                e,
+            )
+            raise
         except Exception as e:
             print_lg("Failed to find Job listings!")
             critical_error_log("In Applier", e)
@@ -1405,8 +1575,18 @@ def main() -> None:
                 break
         
 
-    except (NoSuchWindowException, WebDriverException) as e:
-        print_lg("Browser window closed or session is invalid. Exiting.", e)
+    except (InvalidSessionIdException, NoSuchWindowException) as e:
+        critical_error_log(
+            f"Browser window or WebDriver session was lost "
+            f"(type={type(e).__name__}, details={e!r}).",
+            e,
+        )
+    except WebDriverException as e:
+        critical_error_log(
+            f"WebDriver error while the application was running "
+            f"(type={type(e).__name__}, details={e!r}).",
+            e,
+        )
     except Exception as e:
         critical_error_log("In Applier Main", e)
         pyautogui.alert(e,alert_title)
